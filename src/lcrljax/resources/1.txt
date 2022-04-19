@@ -1,0 +1,1 @@
+F goal1 & G !unsafe
