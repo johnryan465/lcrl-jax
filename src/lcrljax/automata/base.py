@@ -4,18 +4,20 @@ from typing import Generic, Optional, Set, TypeVar
 
 State = TypeVar("State")
 Alphabet = TypeVar("Alphabet")
+SetState = TypeVar("SetState")
+SetAlphabet = TypeVar("SetAlphabet")
 
 
-class Automata(ABC, Generic[State, Alphabet]):
+class Automata(ABC, Generic[State, Alphabet, SetState, SetAlphabet]):
     @abstractmethod
-    def alphabet(self) -> Set[Alphabet]:
+    def alphabet(self) -> SetAlphabet:
         """
         Returns the alphabet of the automata.
         """
         pass
 
     @abstractmethod
-    def states(self) -> Set[State]:
+    def states(self) -> SetState:
         """
         Returns the states of the automata.
         """
@@ -25,19 +27,5 @@ class Automata(ABC, Generic[State, Alphabet]):
     def initial_state(self) -> State:
         """
         Returns the initial state of the automata.
-        """
-        pass
-
-    @abstractmethod
-    def next_states(self, state: State, symbol: Optional[Alphabet]) -> Set[State]:
-        """
-        Returns the next states of the automata.
-        """
-        pass
-
-    @abstractmethod
-    def accept_run(self, run: Set[Alphabet]) -> bool:
-        """
-        Returns true if the run is accepted by the automata.
         """
         pass
