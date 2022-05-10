@@ -26,8 +26,8 @@ class ReplayBuffer(object):
 
         if action is not None:
             self.buffer.append(
-                (self._prev.observation, self._action, self._latest.reward,
-                 self._latest.discount, self._latest.observation))
+                (self._prev.obs, self._action, self._latest.reward,
+                 1., self._latest.obs))
 
     def sample(self, batch_size) -> Data:
         obs_tm1, a_tm1, r_t, discount_t, obs_t = zip(

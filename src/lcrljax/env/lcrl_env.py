@@ -1,12 +1,18 @@
+from functools import partial
 from typing import Any, Dict, List, Tuple
 from bsuite.environments.base import Environment
 
 from lcrljax.automata.ldba import LDBA, JaxLDBA
 import dm_env
 from dm_env import TimeStep
+import jax
+from brax.envs import env
+import jumpy as jp
+from dm_env import specs
+import brax
 
 
-class LCRLEnv(Environment):
+class LCRLEnv(env.Env):
     """
     This is an environment which implements some of the constructions
     we need for the LCRL algorithm.
@@ -25,56 +31,76 @@ class LCRLEnv(Environment):
     If this action is chosen, the environment will take the epsilon transition if it is valid.
     """
 
-    def __init__(self, automata: JaxLDBA, base_env: Environment):
+    def __init__(self, automata: JaxLDBA, base_env: env.Env):
         self.automata = automata
         self.frontier = automata.initial_frontier
         self.base_env = base_env
         self.automata_state = automata.initial_state()
-        self.previous_inner_state = self.base_env.reset()
+        self.num_actions = self.base_env.action_size
         self.epsilon_transitions: Dict[int, int] = {}
 
-    def convert_reward(self, timestep: dm_env.TimeStep) -> TimeStep:
-        return dm_env.TimeStep(
-            timestep.step_type,
-            timestep.observation,
-            self._reward(timestep),
-            timestep.discount,
-        )
+    @partial(jax.jit, static_argnums=(0,))
+    def modify_reward(self, state: env.State) -> env.State:
+        q_prime = state.info["automata_state"]
+        frontier = state.info["frontier"]
+        # print(frontier)
+        # print(q_prime)
+        reward = frontier[q_prime].astype(jp.float32)
+        frontier = self.automata.accepting_frontier_function(q_prime, frontier)
+        return state.replace(reward=reward, info=dict(state.info, **{"frontier": frontier}))  # type: ignore
 
-    def combine_automata_state(self, timestep: dm_env.TimeStep) -> TimeStep:
-        return dm_env.TimeStep(
-            timestep.step_type,
-            (timestep.observation, self.automata_state),
-            timestep.reward,
-            timestep.discount,
-        )
+    @partial(jax.jit, static_argnums=(0,))
+    def add_automata_state(self, state: env.State, automata_state: jp.ndarray) -> env.State:
+        return state.replace(info=dict(state.info, **{"automata_state": automata_state}))  # type: ignore
 
-    def _reward(self, timestep: dm_env.TimeStep) -> float:
-        """Returns a reward for the given `timestep`."""
-        q_prime = timestep.observation[1]
-        reward = 1 if self.frontier[q_prime] else 0
-        self.frontier = self.automata.accepting_frontier_function(q_prime, self.frontier)
-        return reward
+    @partial(jax.jit, static_argnums=(0,))
+    def add_frontier(self, state: env.State, frontier: jp.ndarray) -> env.State:
+        return state.replace(info=dict(state.info, **{"frontier": frontier}))  # type: ignore
 
-    def _reset(self) -> TimeStep:
+    @partial(jax.jit, static_argnums=(0,))
+    def reset(self, rng: jp.ndarray) -> env.State:
         """Returns a `timestep` namedtuple as per the regular `reset()` method."""
-        self.frontier = self.automata.initial_frontier
-        self.automata_state = self.automata.initial_state()
-        self.previous_inner_state = self.base_env.reset()
-        return self.convert_reward(self.combine_automata_state(self.previous_inner_state))
+        frontier = self.automata.initial_frontier
+        automata_state = self.automata.initial_state()
+        state = self.base_env.reset(rng)
 
-    def _step(self, action: int) -> TimeStep:
+        return self.modify_reward(self.add_frontier(self.add_automata_state(state, automata_state), frontier))
+
+    @partial(jax.jit, static_argnums=(0,))
+    def step(self, state: env.State, action: jp.ndarray) -> env.State:
         """Returns a `timestep` namedtuple as per the regular `step()` method."""
-        if action in self.epsilon_transitions:
-            self.automata_state = self.automata.step(self.automata_state, self.epsilon_transitions[action])
-            return self.convert_reward(self.combine_automata_state(self.previous_inner_state))
-        return self.convert_reward(self.combine_automata_state(self.base_env.step(action)))
+        automata_state = state.info["automata_state"]
+        next_automata_state = self.automata.step(automata_state, action - self.num_actions)
 
-    def bsuite_info(self) -> Dict[str, Any]:
-        return {}
+        def true_fn(x):
+            return x
 
-    def observation_spec(self):
-        return super().observation_spec()
+        def false_fn(x):
+            print(x, action)
+            return self.base_env.step(x, action)
+        print(action)
+        print(self.num_actions)
+        print(jax.numpy.greater_equal(action, self.num_actions).shape)
+        state = jax.lax.cond(
+            jax.numpy.greater_equal(action, self.num_actions),
+            true_fn, false_fn, state)
+        return self.modify_reward(self.add_automata_state(state, next_automata_state))
 
-    def action_spec(self):
-        return super().action_spec()
+    @ property
+    def observation_size(self) -> int:
+        """The size of the observation vector returned in step and reset."""
+        return self.base_env.observation_size
+
+    @ property
+    def action_size(self) -> int:
+        return self.base_env.action_size + len(self.epsilon_transitions)
+
+    @ property
+    def sys(self) -> brax.System:
+        return self.base_env.sys
+
+    def action_spec(self) -> specs.Array:
+        return specs.Array(shape=(self.action_size,), dtype=jp.float32)
+
+    def observation_spec(self) -> specs.Array:
+        return specs.Array(shape=(self.observation_size,), dtype=jp.float32)

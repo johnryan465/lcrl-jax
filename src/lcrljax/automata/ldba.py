@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from functools import partial
 from lcrljax.automata.base import Automata
 import jumpy as jp
 from typing import Callable, List, Optional, Set, TypeVar
@@ -73,18 +74,24 @@ class JaxLDBA(BaseLDBA[int, int, jp.ndarray, jp.ndarray]):
         self.num_states = num_states
         self.num_actions = num_actions
         self.fs = conditions
-        self.union_fs: jp.ndarray = jax.numpy.array([])
+        self.union_fs: jp.ndarray = jax.numpy.zeros((num_states, ), dtype=bool)
 
-    def accepting_frontier_function(self, q: int, F: jp.ndarray) -> jp.ndarray:
-        idx = jax.numpy.nonzero(self.fs[:, q])[0]
-        equals_conditions = jax.vmap(jax.numpy.equal, in_axes=(None, 0))(q, self.fs)  # type: ignore
-        if len(idx) > 0:
-            i = idx[0]
-            if equals_conditions[q]:
-                return jax.numpy.logical_and(F, jax.numpy.logical_not(self.fs[i]))
-            else:
-                return jax.numpy.logical_and(self.union_fs, jax.numpy.logical_not(self.fs[i]))
-        return F
+    @partial(jax.jit, static_argnums=(0, ))
+    def accepting_frontier_function(self, q: jp.ndarray, F: jp.ndarray) -> jp.ndarray:
+        idx = jax.numpy.nonzero(jax.numpy.take(self.fs, q, axis=1), size=1, fill_value=jp.array(-1))[0][0]
+        equals_conditions = jax.vmap(jax.numpy.equal, in_axes=(None, 0))(F, self.fs)  # type: ignore
+
+        def true_fn(union_fs, fs, F, idx):
+            def inner_true():
+                return jax.numpy.logical_and(F, jax.numpy.logical_not(fs[idx]))
+
+            def inner_false():
+                return jax.numpy.logical_and(union_fs, jax.numpy.logical_not(fs[idx]))
+            return jax.lax.cond(jax.numpy.take(equals_conditions, q, axis=0)[0], inner_true, inner_false)
+
+        def false_fn(union_fs, fs, F, idx):
+            return F
+        return jax.lax.cond(idx != -1, true_fn, false_fn, self.union_fs, self.fs, F, idx)
 
     def states(self) -> jp.ndarray:
         return jax.numpy.arange(self.num_states)

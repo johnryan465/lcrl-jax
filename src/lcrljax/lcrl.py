@@ -7,7 +7,17 @@ To do LCRL we need to do the following:
 
 """
 
-
+# %%
+from brax import envs
+from brax.io import image
+from brax.io import html
+import dm_env
+from lcrljax.models.dqn.dqn import DQN
+from brax.envs.reacher import Reacher
+import haiku as hk
+from bsuite.environments import catch
+from absl import flags
+from absl import app
 from typing import Tuple
 import jumpy as jp
 import jax
@@ -18,17 +28,9 @@ from bsuite.environments.base import Environment
 
 from lcrljax.utils.replay_buffer import ReplayBuffer
 
-import jax
 
-from absl import app
-from absl import flags
-from bsuite.environments import catch
-from bsuite.environments.base import Environment
-import haiku as hk
-
-
-from lcrljax.models.dqn import DQN
-from lcrljax.utils.replay_buffer import ReplayBuffer
+from jax.config import config
+config.update('jax_disable_jit', False)
 
 
 FLAGS = flags.FLAGS
@@ -46,6 +48,7 @@ flags.DEFINE_integer("eval_episodes", 100, "Number of evaluation episodes.")
 flags.DEFINE_integer("evaluate_every", 50,
                      "Number of episodes between evaluations.")
 
+# %%
 
 def run_loop(
         agent: RLModel,
@@ -67,22 +70,24 @@ def run_loop(
     for episode in range(train_episodes):
 
         # Prepare agent, environment and accumulator for a new episode.
-        timestep = environment.reset()
-        accumulator.push(timestep, None)
+        state = environment.reset(next(rng))
+        accumulator.push(state, None)
         actor_state = agent.initial_actor_state()
 
-        while not timestep.last():
+        while not state.done:
 
             # Acting.
             actor_output, actor_state = agent.actor_step(
-                params, timestep, actor_state, next(rng), evaluation=False)
+                params, state, actor_state, next(rng), evaluation=False)
 
             # Agent-environment interaction.
-            action = int(actor_output.actions)
-            timestep = environment.step(action)
+            action = jp.array(int(actor_output.actions))
+            print(action)
+            print(state)
+            state = environment.step(state, action)
 
             # Accumulate experience.
-            accumulator.push(timestep, action)
+            accumulator.push(state, action)
 
             # Learning.
             if accumulator.is_ready(batch_size):
@@ -93,14 +98,14 @@ def run_loop(
         if not episode % evaluate_every:
             returns = 0.
             for _ in range(eval_episodes):
-                timestep = environment.reset()
+                state = environment.reset(next(rng))
                 actor_state = agent.initial_actor_state()
 
-                while not timestep.last():
+                while not state.last():
                     actor_output, actor_state = agent.actor_step(
-                        params, timestep, actor_state, next(rng), evaluation=True)
-                    timestep = environment.step(int(actor_output.actions))
-                    returns += timestep.reward
+                        params, state, actor_state, next(rng), evaluation=True)
+                    state = environment.step(state, int(actor_output.actions))
+                    returns += state.reward
 
             avg_returns = returns / eval_episodes
             print(f"Episode {episode:4d}: Average returns: {avg_returns:.2f}")
@@ -110,9 +115,9 @@ def main(unused_arg):
     ldba = JaxLDBA(
         num_states=1,
         num_actions=1,
-        conditions=jp.array([True])
+        conditions=jp.array([[True]])
     )
-    base_env = catch.Catch(seed=FLAGS.seed)
+    base_env = Reacher()
 
     env = LCRLEnv(
         ldba,
@@ -123,6 +128,7 @@ def main(unused_arg):
         end_value=FLAGS.epsilon_end,
         transition_steps=FLAGS.epsilon_steps,
         power=1.)
+
     agent = DQN(
         observation_spec=env.observation_spec(),
         action_spec=env.action_spec(),
@@ -144,5 +150,34 @@ def main(unused_arg):
     )
 
 
-if __name__ == "__main__":
-    app.run(main)
+# if __name__ == "__main__":
+#     app.run(main)
+
+
+# %%
+from IPython.display import display, HTML
+# @param ['ant', 'halfcheetah', 'hopper', 'humanoid', 'reacher', 'walker2d', 'fetch', 'grasp', 'ur5e']
+environment = "ant"
+base_env = envs.create(env_name=environment)
+
+ldba = JaxLDBA(
+    num_states=1,
+    num_actions=1,
+    conditions=jp.array([[True]])
+)
+
+env = LCRLEnv(
+    ldba,
+    base_env
+)
+state = env.reset(rng=jp.random_prngkey(seed=0))
+
+HTML(html.render(env.sys, [state.qp]))
+# %%
+print(state)
+# %%
+state = base_env.reset(rng=jp.random_prngkey(seed=0))
+HTML(html.render(base_env.sys, [state.qp]))
+# %%
+
+# %%

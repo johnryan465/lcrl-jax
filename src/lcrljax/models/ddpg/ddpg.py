@@ -1,21 +1,3 @@
-# Copyright 2019 DeepMind Technologies Limited. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-"""A simple double-DQN agent trained to play BSuite's Catch env."""
-
-import collections
-import random
 from absl import flags
 import haiku as hk
 from haiku import nets
@@ -42,8 +24,7 @@ def build_network(num_actions: int) -> hk.Transformed:
     return hk.without_apply_rng(hk.transform(q))
 
 
-class DQN(RLModel):
-    """A simple DQN agent."""
+class DDPG(RLModel):
 
     def __init__(self, observation_spec, action_spec, epsilon_cfg, target_period,
                  learning_rate):
@@ -51,7 +32,7 @@ class DQN(RLModel):
         self._action_spec = action_spec
         self._target_period = target_period
         # Neural net and optimiser.
-        self._network = build_network(action_spec.num_values)
+        self._network = build_network(action_spec.shape[0])
         self._optimizer = optax.adam(learning_rate)
         self._epsilon_by_frame = optax.polynomial_schedule(**epsilon_cfg)
         # Jitting for speed.
@@ -74,7 +55,7 @@ class DQN(RLModel):
         return LearnerState(learner_count, opt_state)
 
     def actor_step(self, params, env_output, actor_state, key, evaluation):
-        obs = jnp.expand_dims(env_output.observation, 0)  # add dummy batch
+        obs = jnp.expand_dims(env_output.obs, 0)  # add dummy batch
         q = self._network.apply(params.online, obs)[0]  # remove dummy batch
         epsilon = self._epsilon_by_frame(actor_state.count)
         train_a = rlax.epsilon_greedy(epsilon).sample(key, q)

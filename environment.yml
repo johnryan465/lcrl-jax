@@ -1,0 +1,16 @@
+name: lcrljax
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - jax
+  - dm-haiku
+  - dm-env
+  - matplotlib
+  - pip
+  - pip:
+    - brax
+    - brax-jumpy
+    - bsuite
+    - rlax
